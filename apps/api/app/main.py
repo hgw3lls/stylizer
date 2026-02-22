@@ -1,10 +1,13 @@
+import io
 import json
 import logging
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -36,9 +39,78 @@ from app.translator import (
     build_synthesis_prompt,
     build_translate_prompt,
     perturb_fusion_plan,
+    redact_sensitive_text,
 )
 
 logger = logging.getLogger("style_translator.api")
+
+
+def infer_mime_type(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext == ".png":
+        return "image/png"
+    if ext in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if ext == ".webp":
+        return "image/webp"
+    return "application/octet-stream"
+
+
+def build_style_pack_export_zip(pack: StylePackModel) -> bytes:
+    style_pack_payload = to_schema(pack).model_dump(mode="json")
+    images: list[dict[str, str]] = []
+    for asset in pack.assets:
+        asset_path = Path(asset.path)
+        archive_name = f"images/{asset.id}{asset_path.suffix or '.bin'}"
+        images.append({"asset_id": asset.id, "path": archive_name, "mime_type": asset.mime_type})
+    style_pack_payload["style_images"] = images
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("style_pack.json", json.dumps(style_pack_payload, indent=2))
+        for asset, image_meta in zip(pack.assets, images, strict=False):
+            zf.writestr(image_meta["path"], Path(asset.path).read_bytes())
+    return buffer.getvalue()
+
+
+def import_style_pack_archive(content: bytes, session: Session) -> StylePack:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content), mode="r") as zf:
+            if "style_pack.json" not in zf.namelist():
+                raise HTTPException(status_code=400, detail="Archive is missing style_pack.json")
+            exported = StylePack.model_validate(json.loads(zf.read("style_pack.json")))
+
+            pack = StylePackModel(
+                name=exported.name,
+                version=exported.version,
+                constraints_json=exported.constraints.model_dump_json(),
+                prompt_anchors_json=exported.prompt_anchors.model_dump_json(),
+            )
+            session.add(pack)
+            session.flush()
+
+            base_dir = Path(settings.assets_root) / pack.id
+            base_dir.mkdir(parents=True, exist_ok=True)
+
+            for image in exported.style_images:
+                if image.path not in zf.namelist():
+                    raise HTTPException(status_code=400, detail=f"Archive is missing image: {image.path}")
+                source_name = Path(image.path).name
+                file_path = base_dir / source_name
+                file_path.write_bytes(zf.read(image.path))
+                session.add(
+                    AssetModel(
+                        style_pack_id=pack.id,
+                        path=str(file_path),
+                        mime_type=image.mime_type or infer_mime_type(file_path),
+                    )
+                )
+
+            session.commit()
+            session.refresh(pack)
+            return to_schema(pack)
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="Invalid zip archive") from exc
 
 
 def default_constraints() -> Constraints:
@@ -152,7 +224,17 @@ def execute_translation(
 
     if mode == "translate_single":
         mime, content = validated_images[0]
-        prompt_used = build_translate_prompt(style_pack.prompt_anchors, style_pack.constraints, options)
+        prompt_used = build_translate_prompt(style_pack, options)
+        logger.info(
+            json.dumps(
+                {
+                    "event": "final_prompt",
+                    "mode": mode,
+                    "style_pack_id": style_pack_id,
+                    "prompt": redact_sensitive_text(prompt_used),
+                }
+            )
+        )
         generated: list[str] = []
         for _ in range(options.variations):
             generated.extend(translator.translate_single(prompt_used, content, mime, options))
@@ -170,7 +252,17 @@ def execute_translation(
     prompt_used = ""
     for idx in range(options.variations):
         plan = perturb_fusion_plan(base_plan, idx, len(validated_images))
-        prompt_used = build_synthesis_prompt(style_pack.prompt_anchors.base_prompt, style_pack.constraints, plan, options)
+        prompt_used = build_synthesis_prompt(style_pack, plan, options)
+        logger.info(
+            json.dumps(
+                {
+                    "event": "final_prompt",
+                    "mode": mode,
+                    "style_pack_id": style_pack_id,
+                    "prompt": redact_sensitive_text(prompt_used),
+                }
+            )
+        )
         anchor_mime, anchor_content = validated_images[plan.subject_from]
         generated = translator.translate_single(prompt_used, anchor_content, anchor_mime, options)
         outputs.extend([TranslationImage(image_base64=i, fusion_plan=plan) for i in generated])
@@ -236,6 +328,29 @@ def create_app() -> FastAPI:
         if pack is None:
             raise HTTPException(status_code=404, detail="Style pack not found")
         return to_schema(pack)
+
+    @app.get("/style-packs/{style_pack_id}/export")
+    def export_style_pack(style_pack_id: str, session: Session = Depends(get_session)) -> StreamingResponse:
+        pack = session.get(StylePackModel, style_pack_id)
+        if pack is None:
+            raise HTTPException(status_code=404, detail="Style pack not found")
+        payload = build_style_pack_export_zip(pack)
+        filename = f"style-pack-{pack.id}.zip"
+        return StreamingResponse(
+            io.BytesIO(payload),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/style-packs/import", response_model=StylePack)
+    async def import_style_pack(
+        archive: UploadFile = File(...),
+        session: Session = Depends(get_session),
+    ) -> StylePack:
+        if (archive.content_type or "") not in {"application/zip", "application/x-zip-compressed", "multipart/x-zip"}:
+            raise HTTPException(status_code=400, detail="Import file must be a zip archive")
+        content = await archive.read()
+        return import_style_pack_archive(content, session)
 
     @app.post("/style-packs/{style_pack_id}/analyze", response_model=StylePack)
     def analyze_style_pack(style_pack_id: str, session: Session = Depends(get_session), analyzer: StylePackAnalyzer = Depends(get_analyzer)) -> StylePack:
