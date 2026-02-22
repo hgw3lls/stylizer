@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://style-translator.dev/schema/style_pack.schema.json",
+  "title": "StylePack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "created_at",
+    "style_images",
+    "constraints",
+    "prompt_anchors",
+    "version"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "style_images": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_id", "path", "mime_type"],
+        "properties": {
+          "asset_id": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "mime_type": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line_rules",
+        "composition_rules",
+        "translation_rules",
+        "forbidden"
+      ],
+      "properties": {
+        "palette": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "materials": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "line_rules": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "composition_rules": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "translation_rules": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "forbidden": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "prompt_anchors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_prompt", "negative_prompt", "variability_knobs"],
+      "properties": {
+        "base_prompt": { "type": "string" },
+        "negative_prompt": { "type": "string" },
+        "variability_knobs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["drift", "density", "abstraction"],
+          "properties": {
+            "drift": { "type": "number", "minimum": 0, "maximum": 1 },
+            "density": { "type": "number", "minimum": 0, "maximum": 1 },
+            "abstraction": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    }
+  }
+}

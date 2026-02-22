@@ -1,0 +1,14 @@
+{
+  "id": "pack-001",
+  "source": "figma",
+  "target": "tailwind",
+  "transformations": [
+    {
+      "selector": ".hero",
+      "properties": {
+        "font-size": "2rem",
+        "color": "#0f172a"
+      }
+    }
+  ]
+}

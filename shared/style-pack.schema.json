@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://style-translator.dev/schema/style-pack.schema.json",
+  "title": "StylePack",
+  "type": "object",
+  "required": ["id", "source", "target", "transformations"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "target": { "type": "string", "minLength": 1 },
+    "transformations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["selector", "properties"],
+        "properties": {
+          "selector": { "type": "string", "minLength": 1 },
+          "properties": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
