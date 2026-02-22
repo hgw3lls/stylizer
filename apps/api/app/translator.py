@@ -1,12 +1,48 @@
 import base64
 import json
+import re
 from typing import Protocol
 from urllib import error, request
 
 from pydantic import ValidationError
 
 from app.config import settings
-from app.schemas import Constraints, FusionPlan, PromptAnchors, TranslateOptions
+from app.schemas import FusionPlan, StylePack, TranslateOptions
+
+STYLE_LOCK_DIRECTIVE = "No hybridization; no drift outside constraints."
+DEFAULT_FORBIDDEN = ["No hybridization", "No drift outside constraints"]
+
+
+def clamp_variability(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def redact_sensitive_text(value: str) -> str:
+    redacted = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]+", "Bearer [REDACTED]", value)
+    redacted = re.sub(r"sk-[A-Za-z0-9]+", "[REDACTED_API_KEY]", redacted)
+    redacted = re.sub(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", "[REDACTED_USER_IMAGE]", redacted)
+    return redacted
+
+
+def enforce_style_lock(style_pack: StylePack, user_prompt_notes: str | None = None) -> dict[str, object]:
+    forbidden = list(style_pack.constraints.forbidden)
+    for item in DEFAULT_FORBIDDEN:
+        if item not in forbidden:
+            forbidden.append(item)
+
+    variability = {
+        "drift": clamp_variability(style_pack.prompt_anchors.variability_knobs.drift),
+        "density": clamp_variability(style_pack.prompt_anchors.variability_knobs.density),
+        "abstraction": clamp_variability(style_pack.prompt_anchors.variability_knobs.abstraction),
+    }
+
+    return {
+        "forbidden": forbidden,
+        "style_lock": STYLE_LOCK_DIRECTIVE,
+        "variability": variability,
+        "user_prompt_notes": redact_sensitive_text(user_prompt_notes or "").strip(),
+    }
+
 
 FUSION_PLAN_PROMPT = """
 You are a style fusion planner. Analyze multiple input images and return JSON only.
@@ -26,22 +62,20 @@ Rules:
 """.strip()
 
 
-def build_translate_prompt(
-    prompt_anchors: PromptAnchors,
-    constraints: Constraints,
-    options: TranslateOptions,
-) -> str:
-    line_rules = "; ".join(constraints.line_rules)
-    composition_rules = "; ".join(constraints.composition_rules)
-    translation_rules = "; ".join(constraints.translation_rules)
-    forbidden = "; ".join(constraints.forbidden)
+def build_translate_prompt(style_pack: StylePack, options: TranslateOptions, user_prompt_notes: str | None = None) -> str:
+    lock = enforce_style_lock(style_pack, user_prompt_notes=user_prompt_notes)
+    line_rules = "; ".join(style_pack.constraints.line_rules)
+    composition_rules = "; ".join(style_pack.constraints.composition_rules)
+    translation_rules = "; ".join(style_pack.constraints.translation_rules)
+    forbidden = "; ".join(lock["forbidden"])
 
-    drift = options.drift if options.drift is not None else prompt_anchors.variability_knobs.drift
-    density = options.density if options.density is not None else prompt_anchors.variability_knobs.density
-    abstraction = options.abstraction if options.abstraction is not None else prompt_anchors.variability_knobs.abstraction
+    drift = clamp_variability(options.drift if options.drift is not None else lock["variability"]["drift"])
+    density = clamp_variability(options.density if options.density is not None else lock["variability"]["density"])
+    abstraction = clamp_variability(options.abstraction if options.abstraction is not None else lock["variability"]["abstraction"])
 
-    return (
-        f"{prompt_anchors.base_prompt}\n"
+    prompt = (
+        f"{style_pack.prompt_anchors.base_prompt}\n"
+        f"Style lock: {lock['style_lock']}\n"
         f"Line rules: {line_rules}\n"
         f"Composition rules: {composition_rules}\n"
         f"Translation rules: {translation_rules}\n"
@@ -50,27 +84,36 @@ def build_translate_prompt(
         f"Output size: {options.size}\n"
         f"Output quality: {options.quality}\n"
         f"Drift: {drift}; Density: {density}; Abstraction: {abstraction}\n"
-        f"Negative prompt: {prompt_anchors.negative_prompt}"
+        f"Negative prompt: {style_pack.prompt_anchors.negative_prompt}"
     )
+    if lock["user_prompt_notes"]:
+        prompt = f"{prompt}\nUser prompt notes: {lock['user_prompt_notes']}"
+    return prompt
 
 
 def build_synthesis_prompt(
-    base_prompt: str,
-    constraints: Constraints,
+    style_pack: StylePack,
     fusion_plan: FusionPlan,
     options: TranslateOptions,
+    user_prompt_notes: str | None = None,
 ) -> str:
-    return (
-        f"{base_prompt}\n"
+    lock = enforce_style_lock(style_pack, user_prompt_notes=user_prompt_notes)
+    prompt = (
+        f"{style_pack.prompt_anchors.base_prompt}\n"
+        f"Style lock: {lock['style_lock']}\n"
         f"Fusion strategy: {options.fusion_strategy}\n"
         f"Fusion plan: {fusion_plan.model_dump_json()}\n"
-        f"Line rules: {'; '.join(constraints.line_rules)}\n"
-        f"Composition rules: {'; '.join(constraints.composition_rules)}\n"
-        f"Translation rules: {'; '.join(constraints.translation_rules)}\n"
-        f"Forbidden: {'; '.join(constraints.forbidden)}\n"
+        f"Line rules: {'; '.join(style_pack.constraints.line_rules)}\n"
+        f"Composition rules: {'; '.join(style_pack.constraints.composition_rules)}\n"
+        f"Translation rules: {'; '.join(style_pack.constraints.translation_rules)}\n"
+        f"Forbidden: {'; '.join(lock['forbidden'])}\n"
         f"Output size: {options.size}\n"
-        f"Output quality: {options.quality}"
+        f"Output quality: {options.quality}\n"
+        f"Negative prompt: {style_pack.prompt_anchors.negative_prompt}"
     )
+    if lock["user_prompt_notes"]:
+        prompt = f"{prompt}\nUser prompt notes: {lock['user_prompt_notes']}"
+    return prompt
 
 
 def validate_fusion_plan_indices(plan: FusionPlan, image_count: int) -> None:
