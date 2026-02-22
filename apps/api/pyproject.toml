@@ -1,0 +1,32 @@
+[project]
+name = "style-translator-api"
+version = "0.1.0"
+description = "FastAPI backend for style pack translation"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.6",
+  "uvicorn[standard]>=0.32.1",
+  "pydantic>=2.10.3",
+  "pydantic-settings>=2.6.1",
+  "sqlalchemy>=2.0.36",
+  "python-multipart>=0.0.18"
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.4",
+  "httpx>=0.28.1",
+  "ruff>=0.8.2",
+  "black>=24.10.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
