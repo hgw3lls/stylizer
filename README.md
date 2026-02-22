@@ -48,6 +48,8 @@ make dev-web
 - `GET /style-packs`
 - `GET /style-packs/{id}`
 - `POST /style-packs/{id}/analyze` (analyzes stored images via OpenAI and saves `constraints` + `prompt_anchors`)
+- `GET /style-packs/{id}/export` (downloads a zip with `style_pack.json` + all style images)
+- `POST /style-packs/import` (upload a style-pack zip and recreate it locally)
 - `POST /translate` (sync multipart translation with style pack + input image anchor)
 - `POST /jobs/translate` (async job creation; returns `job_id` immediately)
 - `GET /jobs/{id}` (job status + result)
@@ -95,3 +97,31 @@ Set `OPENAI_API_KEY`, `OPENAI_ANALYSIS_MODEL`, and `OPENAI_IMAGE_MODEL` in `.env
 - `Style Packs`: create packs, list packs, inspect details, and run analysis.
 - `Translate`: choose pack, choose mode, set controls, submit job, poll status, render/download outputs.
 - `History`: inspect recent translation jobs and outputs saved by API in SQLite.
+
+
+## Prompt hardening behavior
+Prompt generation enforces style lock constraints on every request:
+- The final prompt always includes `constraints.forbidden` plus hard guardrails: `No hybridization` and `No drift outside constraints`.
+- A style-lock directive is injected to prevent drift outside style-pack constraints.
+- Variability controls (`drift`, `density`, `abstraction`) are clamped to `[0, 1]` before prompt assembly.
+- The negative prompt from `prompt_anchors.negative_prompt` is always included for translate and synthesis flows.
+- Final prompts are logged with sensitive data redacted (API keys and inline user image data URLs).
+
+## Sharing style packs between machines
+You can export/import style packs as a zip bundle to move them between environments.
+
+1. Export from source machine:
+   ```bash
+   curl -L -o style-pack.zip http://localhost:8000/style-packs/<STYLE_PACK_ID>/export
+   ```
+2. Import on destination machine:
+   ```bash
+   curl -X POST http://localhost:8000/style-packs/import \
+     -F "archive=@style-pack.zip;type=application/zip"
+   ```
+
+The archive includes:
+- `style_pack.json` manifest (name/version/constraints/prompt anchors)
+- `images/*` style image files
+
+On import, the API creates a new style pack ID and stores images under the configured `ASSETS_ROOT`.
