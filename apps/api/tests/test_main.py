@@ -1,3 +1,5 @@
+import json
+import zipfile
 from io import BytesIO
 from pathlib import Path
 
@@ -220,3 +222,43 @@ def test_style_pack_not_found(tmp_path: Path) -> None:
     response = client.get("/style-packs/missing")
 
     assert response.status_code == 404
+
+
+def test_export_style_pack_archive_contains_manifest_and_images(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    style_pack = create_pack(client)
+
+    response = client.get(f"/style-packs/{style_pack.id}/export")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(BytesIO(response.content)) as archive:
+        names = set(archive.namelist())
+        assert "style_pack.json" in names
+        manifest = json.loads(archive.read("style_pack.json"))
+        assert manifest["name"] == "Neo Deco"
+        assert len(manifest["style_images"]) == 1
+        image_path = manifest["style_images"][0]["path"]
+        assert image_path in names
+        assert archive.read(image_path) == b"img"
+
+
+def test_import_style_pack_archive_recreates_pack(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    style_pack = create_pack(client)
+    export_response = client.get(f"/style-packs/{style_pack.id}/export")
+    assert export_response.status_code == 200
+
+    import_response = client.post(
+        "/style-packs/import",
+        files=[("archive", ("pack.zip", BytesIO(export_response.content), "application/zip"))],
+    )
+
+    assert import_response.status_code == 200
+    imported = StylePack.model_validate(import_response.json())
+    assert imported.id != style_pack.id
+    assert imported.name == style_pack.name
+    assert imported.constraints.forbidden == style_pack.constraints.forbidden
+    assert len(imported.style_images) == 1
+    assert Path(imported.style_images[0].path).exists()
+
