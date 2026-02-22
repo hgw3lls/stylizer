@@ -1,0 +1,23 @@
+# Node
+node_modules/
+apps/web/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Build output
+dist/
+apps/web/dist/
+
+# Env files
+.env
+
+# OS
+.DS_Store
+
+# Local generated media
+apps/api/data/images/
