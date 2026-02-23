@@ -98,6 +98,7 @@ The API validates mime type/size server-side, builds a final prompt from style-p
 Set OPENAI_API_KEY, OPENAI_ANALYSIS_MODEL, and OPENAI_IMAGE_MODEL in .env for analysis/translation.
 
 For image generation, the API resolves `OPENAI_IMAGE_MODEL` against available models. If no compatible image model is available to the key/project, image generation is disabled and the API logs a warning.
+If a selected image model is available but not supported by `/v1/responses` for your account, the API automatically retries via `/v1/images/edits` for translate_single requests.
 
 Set `DEBUG=1` to enable `GET /debug/models` for local debugging. This endpoint returns available model ids, selected analysis model, and selected image model.
 

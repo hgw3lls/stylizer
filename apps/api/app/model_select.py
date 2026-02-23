@@ -105,7 +105,6 @@ def auto_select_models(force_refresh: bool = False) -> ModelSelection:
     # Model IDs listed in the Images reference (availability varies by org/project). :contentReference[oaicite:2]{index=2}
     image_preferred = [
         os.getenv("OPENAI_IMAGE_MODEL", "").strip(),  # allow override
-        "gpt-image-1.5",
         "gpt-image-1",
         "gpt-image-1-mini",
         "dall-e-3",

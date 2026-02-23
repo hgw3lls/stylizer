@@ -3,6 +3,7 @@ import json
 import re
 from typing import Protocol
 from urllib import error, request
+from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -18,6 +19,35 @@ NO_IMAGE_MODEL_MESSAGE = (
     "Set OPENAI_IMAGE_MODEL to an available model id or enable image models for this project."
 )
 
+
+
+
+def _encode_multipart_form_data(fields: dict[str, str], files: dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
+    boundary = f"----OpenAIBoundary{uuid4().hex}"
+    body = bytearray()
+
+    for name, value in fields.items():
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    for name, (filename, content, content_type) in files.items():
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8")
+        )
+        body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        body.extend(content)
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+
+def _is_responses_api_model_unsupported(error_body: str) -> bool:
+    normalized = error_body.lower()
+    return "not supported with the responses api" in normalized
 
 def clamp_variability(value: float) -> float:
     return max(0.0, min(1.0, value))
@@ -185,17 +215,49 @@ class OpenAIImageTranslator:
         try:
             with request.urlopen(req, timeout=90) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+            images: list[str] = []
+            for output in data.get("output", []):
+                for item in output.get("content", []):
+                    if item.get("type") in {"output_image", "image"} and item.get("image_base64"):
+                        images.append(item["image_base64"])
+            if images:
+                return images
+            raise RuntimeError("OpenAI response did not return generated images")
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="ignore")
+            if exc.code != 400 or not _is_responses_api_model_unsupported(body):
+                raise RuntimeError(f"OpenAI image generation failed: {exc.code} {body}") from exc
+
+        form_fields = {
+            "model": selected_model,
+            "prompt": prompt,
+            "size": options.size,
+            "quality": options.quality,
+            "response_format": "b64_json",
+        }
+        if options.seed is not None:
+            form_fields["seed"] = str(options.seed)
+        form_body, content_type = _encode_multipart_form_data(
+            fields=form_fields,
+            files={"image": ("input.png", source_image, source_mime_type)},
+        )
+        fallback_req = request.Request(
+            url="https://api.openai.com/v1/images/edits",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": content_type},
+            data=form_body,
+            method="POST",
+        )
+
+        try:
+            with request.urlopen(fallback_req, timeout=90) as resp:
+                fallback_data = json.loads(resp.read().decode("utf-8"))
         except error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="ignore")
             raise RuntimeError(f"OpenAI image generation failed: {exc.code} {body}") from exc
 
-        images: list[str] = []
-        for output in data.get("output", []):
-            for item in output.get("content", []):
-                if item.get("type") in {"output_image", "image"} and item.get("image_base64"):
-                    images.append(item["image_base64"])
+        images = [item.get("b64_json") for item in fallback_data.get("data", []) if item.get("b64_json")]
         if not images:
-            raise RuntimeError("OpenAI response did not return generated images")
+            raise RuntimeError("OpenAI images edits response did not return generated images")
         return images
 
 
