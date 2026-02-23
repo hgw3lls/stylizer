@@ -89,7 +89,7 @@ def import_style_pack_archive(content: bytes, session: Session) -> StylePack:
             session.add(pack)
             session.flush()
 
-            base_dir = Path(settings.assets_root) / pack.id
+            base_dir = Path(settings.assets_dir) / str(pack.id)
             base_dir.mkdir(parents=True, exist_ok=True)
 
             for image in exported.style_images:
@@ -155,7 +155,7 @@ def validate_image_uploads(images: list[UploadFile], request_id: str) -> list[tu
         if mime_type not in settings.allowed_image_mime_types:
             raise HTTPException(status_code=400, detail=f"Unsupported image mime type: {mime_type}")
         content = image.file.read()
-        if len(content) > settings.max_upload_bytes:
+        if len(content) > settings.effective_max_upload_bytes:
             raise HTTPException(status_code=413, detail="Image exceeds max upload size")
         validated.append((image, content))
     logger.info(json.dumps({"event": "validated_uploads", "request_id": request_id, "count": len(validated)}))
@@ -308,7 +308,7 @@ def create_app() -> FastAPI:
         )
         session.add(pack)
         session.flush()
-        base_dir = Path(settings.assets_root) / pack.id
+        base_dir = Path(settings.assets_dir) / str(pack.id)
         base_dir.mkdir(parents=True, exist_ok=True)
         for image, content in validated:
             file_path = base_dir / f"{uuid4()}{Path(image.filename or 'asset.bin').suffix or '.bin'}"

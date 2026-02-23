@@ -1,42 +1,94 @@
-from pathlib import Path
+from __future__ import annotations
 
-from pydantic import field_validator
+import json
+from typing import Any, List, Optional
+
+from pydantic import field_validator, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_env: str = "development"
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    api_cors_origins: list[str] = ["http://localhost:5173"]
-    database_url: str = "sqlite:///./style_translator.db"
-    assets_root: str = "data/assets"
-    openai_api_key: str = ""
-    openai_analysis_model: str = "gpt-4.1-mini"
-    openai_image_model: str = "gpt-image-1"
-    max_upload_bytes: int = 10_485_760
-    allowed_image_mime_types: list[str] = ["image/png", "image/jpeg", "image/webp"]
+    """
+    Central application settings loaded from .env (pydantic-settings v2).
+    This file intentionally defines ALL fields used across the app so
+    FastAPI doesn't crash on missing attributes.
+    """
 
-    model_config = SettingsConfigDict(env_file="../../.env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # ------------------------------------------------------------------
+    # Database
+    # ------------------------------------------------------------------
+    database_url: str = "sqlite:///./data/app.db"
+
+    # ------------------------------------------------------------------
+    # CORS
+    # ------------------------------------------------------------------
+    api_cors_origins: List[str] = ["http://localhost:5173"]
 
     @field_validator("api_cors_origins", mode="before")
     @classmethod
-    def parse_origins(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+    def parse_cors_origins(cls, v: Any):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith("["):
+                return json.loads(s)
+            return [item.strip() for item in s.split(",") if item.strip()]
+        raise TypeError("api_cors_origins must be list or string")
 
-    @field_validator("allowed_image_mime_types", mode="before")
-    @classmethod
-    def parse_mime_types(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+    # ------------------------------------------------------------------
+    # Upload / Image Validation
+    # ------------------------------------------------------------------
+    allowed_image_mime_types: List[str] = [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    ]
 
-    @field_validator("assets_root", mode="before")
-    @classmethod
-    def normalize_assets_root(cls, value: str) -> str:
-        return str(Path(value))
+    max_upload_mb: int = 25
+    max_upload_bytes: Optional[int] = None
+
+    @computed_field
+    @property
+    def effective_max_upload_bytes(self) -> int:
+        return int(self.max_upload_bytes or (self.max_upload_mb * 1024 * 1024))
+
+    # ------------------------------------------------------------------
+    # Storage
+    # ------------------------------------------------------------------
+    storage_dir: str = "./data"
+    assets_dir: str = "./data/assets"
+    assets_root: str = "./data/assets"
+    stylepacks_dir: str = "./data/stylepacks"
+
+    # ------------------------------------------------------------------
+    # OpenAI
+    # ------------------------------------------------------------------
+    openai_api_key: Optional[str] = "REDACTED_OPENAI_KEY"
+    openai_image_model: str = "gpt-image-1.5"
+    openai_analysis_model: str = "gpt-4o-mini"
+    # ------------------------------------------------------------------
+    # Style / Generation Defaults
+    # ------------------------------------------------------------------
+    default_variations: int = 1
+    max_variations: int = 6
+
+    default_drift: float = 0.2
+    default_density: float = 0.4
+    default_abstraction: float = 0.5
+
+    # ------------------------------------------------------------------
+    # Debug / Dev
+    # ------------------------------------------------------------------
+    debug: bool = True
 
 
 settings = Settings()
