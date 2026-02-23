@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     # OpenAI
     # ------------------------------------------------------------------
     openai_api_key: Optional[str] = None
-    openai_image_model: str = "gpt-image-1.5"
+    openai_image_model: str = "gpt-image-1"
     openai_analysis_model: str = ""
     # ------------------------------------------------------------------
     # Style / Generation Defaults
