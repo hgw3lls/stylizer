@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # OpenAI
     # ------------------------------------------------------------------
-    openai_api_key: Optional[str] = "REDACTED_OPENAI_KEY"
+    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
     openai_image_model: str = "gpt-image-1.5"
     openai_analysis_model: str = "gpt-4o-mini"
     # ------------------------------------------------------------------
