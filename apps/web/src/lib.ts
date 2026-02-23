@@ -3,6 +3,16 @@ import type { HealthResponse, JobStatus, StylePack, TranslateResponse, Translati
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 const stylePackIdSchema = z.string().uuid();
 const translateOptionsSchema = z.object({
   size: z.string().default('1024x1024'),
@@ -20,7 +30,7 @@ const translateOptionsSchema = z.object({
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(errorText || `Request failed: ${response.status}`);
+    throw new ApiError(errorText || `Request failed: ${response.status}`, response.status);
   }
   return response.json() as Promise<T>;
 }
