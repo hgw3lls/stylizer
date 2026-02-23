@@ -4,13 +4,19 @@ import re
 from typing import Protocol
 from urllib import error, request
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.config import settings
+from app.model_select import select_analysis_model, select_image_model
 from app.schemas import FusionPlan, StylePack, TranslateOptions
 
 STYLE_LOCK_DIRECTIVE = "No hybridization; no drift outside constraints."
 DEFAULT_FORBIDDEN = ["No hybridization", "No drift outside constraints"]
+NO_IMAGE_MODEL_MESSAGE = (
+    "No image generation model available for this API key/project. "
+    "Set OPENAI_IMAGE_MODEL to an available model id or enable image models for this project."
+)
 
 
 def clamp_variability(value: float) -> float:
@@ -149,9 +155,12 @@ class OpenAIImageTranslator:
         source_mime_type: str,
         options: TranslateOptions,
     ) -> list[str]:
+        selected_model = select_image_model()
+        if not selected_model:
+            raise HTTPException(status_code=503, detail=NO_IMAGE_MODEL_MESSAGE)
         b64_input = base64.b64encode(source_image).decode("utf-8")
         payload = {
-            "model": self.model,
+            "model": selected_model,
             "input": [
                 {
                     "role": "user",
@@ -261,10 +270,13 @@ def perturb_fusion_plan(base: FusionPlan, variant_index: int, image_count: int) 
 def build_default_translator() -> ImageTranslator:
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for translation")
-    return OpenAIImageTranslator(api_key=settings.openai_api_key, model=settings.openai_image_model)
+    model = select_image_model()
+    if not model:
+        raise HTTPException(status_code=503, detail=NO_IMAGE_MODEL_MESSAGE)
+    return OpenAIImageTranslator(api_key=settings.openai_api_key, model=model)
 
 
 def build_default_fusion_planner() -> FusionPlanner:
     if not settings.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is required for fusion planning")
-    return OpenAIFusionPlanner(api_key=settings.openai_api_key, model=settings.openai_analysis_model)
+    return OpenAIFusionPlanner(api_key=settings.openai_api_key, model=select_analysis_model())

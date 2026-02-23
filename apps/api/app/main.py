@@ -15,6 +15,7 @@ from app.analyzer import StylePackAnalyzer, analyze_with_retry, build_default_an
 from app.config import settings
 from app.db import Base, get_engine, get_session
 from app.models import AssetModel, StylePackModel, TranslationJobModel, TranslationOutputModel
+from app.model_select import list_model_ids, select_analysis_model, select_image_model
 from app.schemas import (
     Constraints,
     CreateJobResponse,
@@ -288,10 +289,41 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     def startup() -> None:
         Base.metadata.create_all(get_engine())
+        analysis_model: str | None = None
+        image_model: str | None = None
+        try:
+            # Warm model selection cache and emit one-time selection logs.
+            analysis_model = select_analysis_model()
+            image_model = select_image_model()
+        except RuntimeError as exc:
+            logger.warning("OpenAI model selection unavailable at startup: %s", exc)
+
+        logger.info(
+            "Startup config assets_dir=%s database_url=%s max_upload_mb=%s allowed_image_mime_types=%s analysis_model=%s image_model=%s",
+            settings.assets_dir,
+            settings.database_url,
+            settings.max_upload_mb,
+            settings.allowed_image_mime_types,
+            analysis_model,
+            image_model,
+        )
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok", service="style-translator-api")
+
+    @app.get("/debug/models")
+    def debug_models() -> dict[str, object]:
+        if not settings.debug:
+            raise HTTPException(status_code=404, detail="Not found")
+        ids = sorted(list(list_model_ids()))
+        return {
+            "available_model_ids": ids[:200],
+            "available_model_count": len(ids),
+            "selected_analysis_model": select_analysis_model(),
+            "selected_image_model": select_image_model(),
+            "truncated": len(ids) > 200,
+        }
 
     @app.post("/style-packs", response_model=StylePack)
     async def create_style_pack(

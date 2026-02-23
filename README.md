@@ -83,6 +83,8 @@ docker compose up --build
 ## OpenAI analysis configuration
 Set OPENAI_API_KEY and OPENAI_ANALYSIS_MODEL in .env before using /style-packs/{id}/analyze.
 
+The API auto-selects the first available model from a preference list by calling `GET /v1/models` and caching results for 5 minutes. Set `OPENAI_ANALYSIS_MODEL` to force a preferred analysis model when available.
+
 ## Translate endpoint
 
 POST /translate accepts multipart fields: style_pack_id, mode (translate_single or synthesize_multi), input_images[], and JSON options.
@@ -95,6 +97,10 @@ The API validates mime type/size server-side, builds a final prompt from style-p
 
 Set OPENAI_API_KEY, OPENAI_ANALYSIS_MODEL, and OPENAI_IMAGE_MODEL in .env for analysis/translation.
 
+For image generation, the API resolves `OPENAI_IMAGE_MODEL` against available models. If no compatible image model is available to the key/project, image generation is disabled and the API logs a warning.
+
+Set `DEBUG=1` to enable `GET /debug/models` for local debugging. This endpoint returns available model ids, selected analysis model, and selected image model.
+
 synthesize_multi options include fusion_strategy (collage | poseA_bgB | motif_fusion) and optional dominance_weights.
 
 ## UI pages
@@ -104,6 +110,56 @@ Style Packs: create packs, list packs, inspect details, and run analysis.
 Translate: choose pack, choose mode, set controls, submit job, poll status, render/download outputs.
 
 History: inspect recent translation jobs and outputs saved by API in SQLite.
+
+## Local verification checklist (OpenAI model selection)
+
+1. Start API:
+   ```bash
+   cd apps/api
+   uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+2. Check health:
+   ```bash
+   curl -s http://localhost:8000/health
+   ```
+   Expected: JSON with `{"status":"ok"...}`.
+3. (Optional when `DEBUG=1`) inspect model selection:
+   ```bash
+   curl -s http://localhost:8000/debug/models | jq '{available_model_count,selected_analysis_model,selected_image_model,truncated}'
+   ```
+   Expected: selected model ids and count/truncation metadata.
+4. Create + analyze a style pack:
+   ```bash
+   curl -s -X POST http://localhost:8000/style-packs \
+     -F "name=verify-pack" \
+     -F "images=@/path/to/style.png;type=image/png"
+
+   curl -s -X POST http://localhost:8000/style-packs/<STYLE_PACK_ID>/analyze
+   ```
+   Expected: style pack JSON with populated `constraints` and `prompt_anchors`.
+5. Create translate job and poll status:
+   ```bash
+   curl -s -X POST http://localhost:8000/jobs/translate \
+     -F "style_pack_id=<STYLE_PACK_ID>" \
+     -F "mode=translate_single" \
+     -F 'options={"size":"1024x1024","quality":"high","variations":1,"preserve_composition":true}' \
+     -F "input_images=@/path/to/input.png;type=image/png"
+
+   curl -s http://localhost:8000/jobs/<JOB_ID>
+   ```
+   Expected:
+   - success path: `status=completed` and result images, or
+   - disabled path: `status=failed` with message containing `No image generation model available for this API key/project`.
+6. Ensure no model-not-found error appears:
+   ```bash
+   curl -s http://localhost:8000/jobs/<JOB_ID> | jq -r '.error_message // ""'
+   ```
+   Expected: does **not** contain `model_not_found`.
+
+For a one-command automated local check, run:
+```bash
+./apps/api/scripts/verify_local_dev.sh
+```
 
 ## Prompt hardening behavior
 

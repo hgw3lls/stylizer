@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from urllib import request, error
 
 
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class ModelSelection:
 _CACHE_TTL_SECONDS = int(os.getenv("OPENAI_MODELS_CACHE_TTL", "300"))
 _cached_at: float = 0.0
 _cached_ids: Optional[Set[str]] = None
+_selection_logged: bool = False
 
 
 def _get_api_key() -> str:
@@ -113,3 +116,29 @@ def auto_select_models(force_refresh: bool = False) -> ModelSelection:
 
     # If none available, return None (your UI can disable generation gracefully)
     return ModelSelection(analysis_model=analysis_model, image_model=image_model)
+
+
+def _log_selection_once(selection: ModelSelection) -> None:
+    global _selection_logged
+    if _selection_logged:
+        return
+    logger.info(
+        "OpenAI model selection complete analysis_model=%s image_model=%s",
+        selection.analysis_model,
+        selection.image_model,
+    )
+    if selection.image_model is None:
+        logger.warning("OpenAI image generation disabled: no compatible image model for this key/project")
+    _selection_logged = True
+
+
+def select_analysis_model(force_refresh: bool = False) -> str:
+    selection = auto_select_models(force_refresh=force_refresh)
+    _log_selection_once(selection)
+    return selection.analysis_model
+
+
+def select_image_model(force_refresh: bool = False) -> Optional[str]:
+    selection = auto_select_models(force_refresh=force_refresh)
+    _log_selection_once(selection)
+    return selection.image_model

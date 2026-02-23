@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { createTranslateJob, extractResult, getJobStatus, listStylePacks } from '../lib';
+import { ApiError, createTranslateJob, extractResult, getJobStatus, listStylePacks } from '../lib';
 import type { TranslateResponse } from '../types';
 
 export function TranslatePage() {
@@ -89,6 +89,11 @@ export function TranslatePage() {
         {createJobMutation.isPending ? 'Submitting...' : 'Create job'}
       </button>
       {createJobMutation.error && <p className="text-sm text-rose-400">{createJobMutation.error.message}</p>}
+      {createJobMutation.error instanceof ApiError && createJobMutation.error.status === 503 && (
+        <div className="rounded border border-amber-500/50 bg-amber-900/30 p-3 text-sm text-amber-200">
+          Image generation is currently unavailable for this API key/project. Set <code>OPENAI_IMAGE_MODEL</code> to an available model id or enable image models for this project.
+        </div>
+      )}
 
       {jobId && (
         <div className="rounded bg-slate-950 p-3 text-sm">
